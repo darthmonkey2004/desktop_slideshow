@@ -7,8 +7,12 @@ import subprocess
 import os
 
 class img_changer():
-	def __init__(self, wait=30):
-		self.files = self.get_files()
+	def __init__(self, wait=30, path=None):
+		if path is None:
+			self.path = os.path.join(os.path.expanduser("~"), 'Pictures', 'Wallpapers')
+		self.path = path
+		print(f"path:{self.path}")
+		self.files = self.get_files(self.path)
 		self.wait = wait
 		self.runloop = True
 
@@ -23,12 +27,17 @@ class img_changer():
 		shuffle(self.files)
 		shuffle(self.files)
 		return self.files[randint(0, len(self.files) - 1)]
-	def get_files(self, path='/home/monkey/Pictures/Wallpapers'):
-		com = f"find \"{path}\" -name \"*.*\""
+	def get_files(self, path=None):
+		if self.path is not None:
+			self.path = path
+		com = f"find \"{self.path}\" -name \"*.*\""
 		try:
 			files = subprocess.check_output(com, shell=True).decode().strip().split("\n")
 		except Exception as e:
 			files = []
+		if files == []:
+			print(f"No files found at {self.path}! Please move all desktop images to this directory and restart. Exiting...")
+			exit()
 		return files
 	def run(self):
 		self.t = Thread(target=self.loop)
@@ -40,6 +49,22 @@ class img_changer():
 			time.sleep(self.wait)
 		exit()
 
+
 if __name__ == "__main__":
-	c = img_changer()
+	import sys
+	try:
+		path = sys.argv[1]
+	except:
+		path = os.path.join(os.path.expanduser("~"), 'Pictures', 'Wallpapers')
+	if not os.path.exists(path):
+		print(f"Path doesn't exist: {path}!")
+		yn = input("Create? (y/n)")
+		if yn == 'y':
+			os.makedirs(path, exist_ok=True)
+			print(f"directory created at {path}! Please move all desktop wallpaper images to this directory and re-run!")
+			exit()
+		else:
+			print("exiting...")
+			exit()
+	c = img_changer(path=path)
 	c.loop()
