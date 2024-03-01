@@ -1,4 +1,4 @@
-# ubuntu_desktop_slideshow
+# desktop_slideshow
 
 copy imgchanger to /<user>/.local/bin
 add to path ("export PATH=$PATH:$HOME/.local/bin")
