@@ -1,33 +1,57 @@
 #!/usr/bin/env python3
 
+import imghdr
+import platform
 from threading import Thread
 from random import shuffle, randint
 import time
 import subprocess
 import os
 
+def get_os():
+	return platform.uname()[1]
+
 class img_changer():
+	"""Create slideshow of images contained in a given directory. Also can download images from url 
+	(or list, or filepath containing urls) to that directory."""
 	def __init__(self, wait=30, path=None):
 		if path is None:
 			self.path = os.path.join(os.path.expanduser("~"), 'Pictures', 'Wallpapers')
-		self.path = path
+		else:
+			self.path = path
 		print(f"path:{self.path}")
 		self.files = self.get_files(self.path)
 		self.wait = wait
 		self.runloop = True
 
 	def set_background(self):
-		#com = f"sudo gsettings get org.gnome.desktop.background picture-uri \"file://{filepath}\""
-		#com = f"sudo gsettings set org.gnome.desktop.background picture-uri \"file:///{filepath}\""
+		"""Main function to change background. Does os detection to determine method"""
+		if get_os() == 'raspberrypi':
+			return self.rpi_set_background()
+		else:
+			return self.ubuntu_set_background()
+
+	def rpi_set_background(self):
+		"""Sets background on Raspberry Pi (pcmanfm)"""
+		filepath = self.get_img()
+		com = f"pcmanfm --set-wallpaper \"{filepath}\""
+		return subprocess.call(com, shell=True)
+
+	def ubuntu_set_background(self):
+		"""Sets background in Ubuntu (gsettings)"""
 		filepath = self.get_img()
 		com = f"gsettings set org.gnome.desktop.background picture-uri \"file:///{filepath}\""
-		ret = subprocess.check_output(com, shell=True)
+		return subprocess.call(com, shell=True)
+
 	def get_img(self):
+		"""Get random image filepath from files attr"""
 		shuffle(self.files)
 		shuffle(self.files)
 		shuffle(self.files)
 		return self.files[randint(0, len(self.files) - 1)]
+
 	def get_files(self, path=None):
+		"""Finds all files in a given directory"""
 		if self.path is not None:
 			self.path = path
 		com = f"find \"{self.path}\" -name \"*.*\""
@@ -39,24 +63,133 @@ class img_changer():
 			print(f"No files found at {self.path}! Please move all desktop images to this directory and restart. Exiting...")
 			exit()
 		return files
+
 	def run(self):
+		"""Run image changer thread"""
 		self.t = Thread(target=self.loop)
 		self.t.setDaemon(True)
 		self.t.start()
+
 	def loop(self):
+		"""Main loop, wait time is set by attr self.wait"""
+		print("Running slideshow...")
 		while self.runloop:
 			self.set_background()
 			time.sleep(self.wait)
 		exit()
 
+	def mv(self, filepath, newpath):
+		"""Uses subprocess to rename files"""
+		com = f"mv \"{filepath}\" \"{newpath}\""
+		ret = subprocess.check_output(com, shell=True).decode().strip()
+		if ret == '':
+			return True
+		else:
+			raise Exception(f"Error moving file: {ret}")
+
+	def rm(self, filepath):
+		"""Uses subprocess to remove a file after conversion."""
+		print(f"Removing file: {filepath}")
+		com = f"rm \"{filepath}\""
+		ret = subprocess.check_output(com, shell=True).decode().strip()
+		if ret == '':
+			return True
+		else:
+			raise Exception(f"Error removing file: {ret}")
+
+	def convertImg(self, filepath):
+		"""Tests filepath for image type and corrects filename if needed, then converts to jpg if needed."""
+		t = imghdr.what(filepath)
+		if t == 'jpeg':
+			if '.jpg' in filepath:
+				print("already a jpeg! Not converting...")
+				return filepath
+			else:
+				print("File is a jpeg, incorrect extension! Converting...")
+				fname, ext = os.path.splitext(filepath)
+				newpath = f"{fname}.jpg"
+				self.mv(filepath, newpath)
+				filepath = newpath
+		elif t == 'webp':
+			if '.jpg' in filepath:
+				print(f"File is webp, named as jpg. Fixing...")
+				fname, ext = os.path.splitext(filepath)
+				newpath = f"{fname}.webp"
+				self.mv(filepath, newpath)
+				filepath = newpath
+			elif '.webp' in filepath:
+				pass
+		print("filepath:", filepath)
+		fname, _ = os.path.splitext(filepath)
+		newpath = f"{fname}.jpg"
+		com = f"convert \"{filepath}\" \"{newpath}\""
+		ret = subprocess.check_output(com, shell=True).decode().strip()
+		if ret == '':
+			if newpath != filepath:
+				self.rm(filepath)
+				return newpath
+		else:
+			raise Exception(f"Error converting image: {ret}")
+
+
+	def dl_image(self, url):
+		"""download a single image from url. Runs through convertImg to make .jpg"""
+		name = os.path.basename(url)
+		filepath = os.path.join(self.path, name)
+		com = f"curl -o \"{filepath}\" \"{url}\""
+		ret = subprocess.check_output(com, shell=True).decode().strip()
+		if ret == '':
+			filepath = self.convertImg(filepath)
+		print(f"Saved image: {filepath}")
+		return filepath
+
+	def dl_imgList(self, urls):
+		"""download list of images by url. Accepts either a filepath to read containing list, or a list object, or a single url"""
+		if type(urls) == str:
+			if os.path.exists(urls):
+				print(f"Urls file provided! Reading...")
+				with open(urls, 'r') as f:
+					urls = f.read().splitlines()
+					f.close()
+			else:
+				print(f"Single url provided! Adding to list and going anyway, though you could just use dl_image!")
+				urls = [urls]
+		files = []
+		pos = 0
+		for url in urls:
+			if url != '':
+				pos += 1
+				print(f"Progress: {pos}/{len(urls)}")
+				files.append(self.dl_image(url))
+		return files
 
 if __name__ == "__main__":
 	import sys
+	func = 'slideshow'
+	dlpath = None
+	path = None
 	try:
-		path = sys.argv[1]
+		arg1 = sys.argv[1]
+		if arg1 == '-d' or arg1 == '--download':
+			dlpath = sys.argv[2]
+			func = 'dl_imgList'
+		elif arg1 == '--help' or arg1 == '-h':
+			txt = """Usage:
+	Batch image download: './imgchanger -d/--download /my/urls/filepath.txt'
+	help: './imgchanger -h/--help'
+	run slideshow: './imgchanger'
+	run slideshow at certain path: './imgchanger /path/to/image/directory'
+"""
+			print(txt)
+			exit()
+		else:
+			path = arg1
+			print("Path set:", path)
 	except:
+		pass
+	if path is None:# set path if not set in argv
 		path = os.path.join(os.path.expanduser("~"), 'Pictures', 'Wallpapers')
-	if not os.path.exists(path):
+	if not os.path.exists(path):#check if path exists, asks user if creation needed.
 		print(f"Path doesn't exist: {path}!")
 		yn = input("Create? (y/n)")
 		if yn == 'y':
@@ -67,4 +200,10 @@ if __name__ == "__main__":
 			print("exiting...")
 			exit()
 	c = img_changer(path=path)
-	c.loop()
+	if func == 'slideshow':#runs slideshow if no arguments provided
+		c.loop()
+	elif func == 'dl_imgList':#runs image downloader if urls file provided with -d/--download
+		print("Downloading from text file:", dlpath)
+		c.dl_imgList(dlpath)
+		
+		
